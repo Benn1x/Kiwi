@@ -1,5 +1,0 @@
-[config]
-files = "html"
-ssl = "http"
-notfound = "error.html"
-[plugins]
