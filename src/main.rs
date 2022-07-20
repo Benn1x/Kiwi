@@ -1,14 +1,14 @@
 #![allow(non_snake_case)]
 
-use actix_web::{ web, App, HttpRequest,HttpResponse, HttpServer, Result};
+use actix_web::{ web, App, HttpRequest,HttpResponse, HttpServer};
+use mime;
 use std::path::PathBuf;
-use actix_files::NamedFile;
-use actix_files as fs;
 use serde_derive::Deserialize;
 use std::process::exit;
 use toml;
 use std::fs::read_to_string;
 use actix_web::http::header::ContentType;
+use std::fs;
 
 //structure for the config.toml
 #[derive(Deserialize)]
@@ -31,27 +31,47 @@ enum Configs{
 }
 enum Response{
     OK,
+    JS,
+    CSS,
     NOTOK
 }
-fn response(x: NamedFile, y:Response)->HttpResponse{
-    let boxed: Box<NamedFile> = Box::new(x);
+//The Premade Responses
+fn response(x: String, y:Response)->HttpResponse{
+    
     match y{
         Response::OK => {
         HttpResponse::Ok()
         .content_type(ContentType::html())
         .insert_header(("X-Hdr", "sample"))
-        .body(*boxed)
+        .body(x)
         }
+        Response::JS => {
+            HttpResponse::Ok()
+
+        .content_type(mime::APPLICATION_JAVASCRIPT)
+        .insert_header(("X-Hdr", "sample"))
+        .body(x)
+        }
+        Response::CSS => {
+            HttpResponse::Ok()
+                .content_type(mime::TEXT_CSS)
+                .insert_header(("X-Hdr", "sample"))
+                .body(x)
+        }
+
         Response::NOTOK => {
             HttpResponse::NotFound()
         .content_type(ContentType::html())
         .insert_header(("X-Hdr", "sample"))
-        .body(*boxed)
+        .body(x)
         }
+
     }
 }
-fn open(x: PathBuf) ->NamedFile{
-    return fs::NamedFile::open(x).unwrap();
+//Convert the Content of a file into a single strig forthe ressponse function
+fn open(x: PathBuf) -> String{
+    fs::read_to_string(x)
+        .expect("Somthing went wrong")
 }
 fn read(types: Configs) -> std::string::String{
     let filename = "config.toml";
@@ -94,7 +114,6 @@ fn read(types: Configs) -> std::string::String{
 }
 
 async fn index(req: HttpRequest) -> HttpResponse {
-    //TODO: Use httpResponse insted of NamedFIle 
     //gets from the requestet url the path
     let mut path: PathBuf = req.match_info().query("file").parse().unwrap();
     //set the error page, and get the path from the config.toml
@@ -124,6 +143,9 @@ async fn index(req: HttpRequest) -> HttpResponse {
                 path.push(&error_page);
             },
           }
+        //The response function get used for the http response the open function does convert the
+        //inputed file into a single string what get parsed into the response function the Response
+        //Enum is made to esaly tell the function with what for a response it should answer
         return response(open(path),Response::OK);
     }
     //if path is empty it will return the main file at the filr root
@@ -134,8 +156,11 @@ async fn index(req: HttpRequest) -> HttpResponse {
     //notfound page
     if path.exists() {
         if path.extension().unwrap().to_str().unwrap() == "php" || path.extension().unwrap().to_str().unwrap() == "js" {
-           return response(open(notimplementet), Response::OK);
-        }   
+           return response(open(path), Response::JS);
+        }
+        if path.extension().unwrap().to_str().unwrap() == "css" {
+            return response(open(path), Response::CSS);
+        }
         return response(open(path), Response::OK);
     } else {
 
@@ -149,7 +174,7 @@ async fn main() -> std::io::Result<()> {
     HttpServer::new(move || {
         App::new()
             .route("/{file:.*}", web::get().to(index))
-            .service(fs::Files::new("/", ".").index_file("index.html"))
+            .service(actix_files::Files::new("/", ".").index_file("index.html"))
         })
     .bind(("127.0.0.1", 8080))?
     .run()
