@@ -77,7 +77,7 @@ fn response(x: String, y:Response)->HttpResponse{
 }
 fn img_response(x: PathBuf, y: Image)->HttpResponse{
     let mut f = fs::File::open(x).expect("Somthing went wrong");
-    let mut buffer = [0;4096];
+    let mut buffer = vec![0; 49152];
     let n = f.read(&mut buffer[..]);
     match y{
         Image::JPG =>{
