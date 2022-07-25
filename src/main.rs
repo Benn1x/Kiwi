@@ -1,6 +1,6 @@
 #![allow(non_snake_case)]
 
-use actix_web::{ web, App, HttpRequest,HttpResponse, HttpServer};
+use actix_web::{ web, App, HttpRequest,HttpResponse , HttpServer};
 use mime;
 use std::path::PathBuf;
 use serde_derive::Deserialize;
@@ -9,6 +9,8 @@ use toml;
 use std::fs::read_to_string;
 use actix_web::http::header::ContentType;
 use std::fs;
+use std::io::prelude::*;
+use std::io;
 
 //structure for the config.toml
 #[derive(Deserialize)]
@@ -34,6 +36,11 @@ enum Response{
     JS,
     CSS,
     NOTOK
+}
+enum Image{
+    PNG,
+    JPG,
+    ICO
 }
 //The Premade Responses
 fn response(x: String, y:Response)->HttpResponse{
@@ -67,6 +74,27 @@ fn response(x: String, y:Response)->HttpResponse{
         }
 
     }
+}
+fn img_response(x: PathBuf, y: Image)->HttpResponse{
+    let mut f = fs::File::open(x).expect("Somthing went wrong");
+    let mut buffer = [0;4096];
+    let n = f.read(&mut buffer[..]);
+    match y{
+        Image::JPG =>{
+            HttpResponse::Ok()
+            .content_type("image/jpeg")
+            .body(buffer)}
+        Image::PNG =>{
+            HttpResponse::Ok()
+            .content_type("image/png")
+            .body(buffer)}
+        Image::ICO => {
+            HttpResponse::Ok()
+            .content_type("image/x-icon")
+            .body(buffer)}
+
+        }
+        
 }
 //Convert the Content of a file into a single strig forthe ressponse function
 fn open(x: PathBuf) -> String{
@@ -155,13 +183,14 @@ async fn index(req: HttpRequest) -> HttpResponse {
     //if nothing aboovs fits it will check if the requeted file exist if not if will return the
     //notfound page
     if path.exists() {
-        if path.extension().unwrap().to_str().unwrap() == "php" || path.extension().unwrap().to_str().unwrap() == "js" {
-           return response(open(path), Response::JS);
+        match path.extension().unwrap().to_str().unwrap(){
+            "js" => {return response(open(path), Response::JS);}
+            "png" => {return img_response(path, Image::PNG);}
+            "jpeg" => {return img_response(path, Image::JPG);}
+            "ico" => {return img_response(path, Image::ICO);}
+            "css" => {return response(open(path), Response::CSS);}
+            _ =>  {return response(open(path), Response::OK);}
         }
-        if path.extension().unwrap().to_str().unwrap() == "css" {
-            return response(open(path), Response::CSS);
-        }
-        return response(open(path), Response::OK);
     } else {
 
         return response(open(error), Response::NOTOK);
