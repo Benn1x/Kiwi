@@ -1,7 +1,9 @@
 #![allow(non_snake_case)]
 
-use actix_web::{ web, App, HttpRequest,HttpResponse , HttpServer};
+use actix_web::{ web, App, HttpRequest,HttpResponse , HttpServer, Error};
 use mime;
+use async_stream::{try_stream, AsyncStream};
+use bytes::Bytes;
 use std::path::PathBuf;
 use serde_derive::Deserialize;
 use std::process::exit;
@@ -10,7 +12,6 @@ use std::fs::read_to_string;
 use actix_web::http::header::ContentType;
 use std::fs;
 use std::io::prelude::*;
-use std::io;
 
 //structure for the config.toml
 #[derive(Deserialize)]
@@ -24,7 +25,11 @@ struct Config {
     ssl: String,
     notfound: String
 }
-
+struct Pages{
+    error: PathBuf,
+    notimp: PathBuf,
+    index: PathBuf
+}
 //the config enum to easy declare an action for the config
 enum Configs{
     Files,
@@ -76,29 +81,37 @@ fn response(x: String, y:Response)->HttpResponse{
     }
 }
 fn img_response(x: PathBuf, y: Image)->HttpResponse{
-    let mut f = fs::File::open(x).expect("Somthing went wrong");
-    let mut buffer = vec![0; 49152];
-    let n = f.read(&mut buffer[..]);
+    let stream: AsyncStream<Result<Bytes, Error>, _> = try_stream! {
+        let mut f = fs::File::open(x)?;
+        let mut buffer = [0; 4096];
+        loop{
+            let n = f.read(&mut buffer[..])?;
+            if n == 0 {
+                break;
+            }
+            yield Bytes::copy_from_slice(&buffer[..n]);
+        }
+    };
     match y{
         Image::JPG =>{
             HttpResponse::Ok()
             .content_type("image/jpeg")
-            .body(buffer)}
+            .streaming(stream)}
         Image::PNG =>{
             HttpResponse::Ok()
             .content_type("image/png")
-            .body(buffer)}
+            .streaming(stream)}
         Image::ICO => {
             HttpResponse::Ok()
             .content_type("image/x-icon")
-            .body(buffer)}
+            .streaming(stream)}
 
         }
         
 }
 //Convert the Content of a file into a single strig forthe ressponse function
 fn open(x: PathBuf) -> String{
-    fs::read_to_string(x)
+        fs::read_to_string(x)
         .expect("Somthing went wrong")
 }
 fn read(types: Configs) -> std::string::String{
@@ -141,34 +154,48 @@ fn read(types: Configs) -> std::string::String{
 
 }
 
+fn pages()->Pages{
+    let  error_page = read(Configs::NotFound);
+      let mut error = PathBuf::new();
+      error.push(&error_page);
+      let mut  notimplementet = PathBuf::new();
+      notimplementet.push("notimplementet.html");
+       //set the pathbuf for the index file
+      let mut index = PathBuf::new();
+      //check if it needs to be a index.html oder index.php file
+      let readed_files = read(Configs::Files);
+      match readed_files.as_str(){
+        "html" =>  index.push("index.html"),
+        "php" => index.push("index.php"),
+        _ => index.push(&error_page),
+      }
+      Pages{
+          error: error,
+          notimp: notimplementet,
+          index: index
+      }
+}
+
 async fn index(req: HttpRequest) -> HttpResponse {
+
     //gets from the requestet url the path
     let mut path: PathBuf = req.match_info().query("file").parse().unwrap();
-    //set the error page, and get the path from the config.toml
-    let  error_page = read(Configs::NotFound);
-    let mut error = PathBuf::new();
-    error.push(&error_page);
-    //set the noimplementet path
-    let mut  notimplementet = PathBuf::new();
-    notimplementet.push("notimplementet.html");
-    //set the pathbuf for the index file 
-    let mut index = PathBuf::new();
-    //check if it needs to be a index.html oder index.php file
-    let readed_files = read(Configs::Files);
-    match readed_files.as_str(){
-      "html" =>  index.push("index.html"),
-      "php" => index.push("index.php"),
-      _ => index.push(&error_page),
+    if path.as_os_str().is_empty()  {
+          return response(open(pages().index), Response::OK);
+      }
+
+    if !path.exists(){
+         return response(open(pages().error), Response::NOTOK);
     }
-   
+
     //looks up if the pathbuf path is a directory or it ends with / if its is/does then it will get
     //rediretedt to the index file in the path
     if path.is_dir() || path.ends_with("/") {
-        match readed_files.as_str(){
+        match read(Configs::Files).as_str(){
             "html" =>  path.push("index.html"),
             "php" => path.push("index.php"),
-            _ => {path.clear();
-                path.push(&error_page);
+            _ => {
+                return response(open(pages().error),Response::OK);
             },
           }
         //The response function get used for the http response the open function does convert the
@@ -176,13 +203,8 @@ async fn index(req: HttpRequest) -> HttpResponse {
         //Enum is made to esaly tell the function with what for a response it should answer
         return response(open(path),Response::OK);
     }
-    //if path is empty it will return the main file at the filr root
-    if path.as_os_str().is_empty()  {
-        return response(open(index), Response::OK);
-    }
     //if nothing aboovs fits it will check if the requeted file exist if not if will return the
     //notfound page
-    if path.exists() {
         match path.extension().unwrap().to_str().unwrap(){
             "js" => {return response(open(path), Response::JS);}
             "png" => {return img_response(path, Image::PNG);}
@@ -191,10 +213,6 @@ async fn index(req: HttpRequest) -> HttpResponse {
             "css" => {return response(open(path), Response::CSS);}
             _ =>  {return response(open(path), Response::OK);}
         }
-    } else {
-
-        return response(open(error), Response::NOTOK);
-    }
 }
 
 
